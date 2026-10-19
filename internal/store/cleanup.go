@@ -296,6 +296,9 @@ func (s *Store) TouchDownload(repository, assetPath string, at time.Time) {
 	_ = s.persistLocked()
 }
 
+// MatchGlob supports '/'-separated globs plus '**' for any depth.
+func MatchGlob(pattern, name string) (bool, error) { return matchCleanupGlob(pattern, name) }
+
 // matchCleanupGlob supports '/'-separated globs plus '**' for any depth.
 func matchCleanupGlob(pattern, name string) (bool, error) {
 	return matchGlobSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))

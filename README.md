@@ -8,6 +8,7 @@
 - 按需求排除：Terraform、Composer、Ansible、R / CRAN、NuGet、Hugging Face Models、RubyGems
 - 后台能力：用户 / 角色 / 用户组 / 权限 / API Token / 匿名访问 / LDAP / OIDC / 审计日志 / 请求日志 / Prometheus 指标
 - 签名：APT `Release` / `InRelease` / `Release.gpg`，Alpine `APKINDEX.tar.gz` RSA 签名
+- 常用仓库能力：`.sha1/.md5/.sha256` 校验和文件、include/exclude 路径规则、存储配额、全局搜索
 
 ![控制台概览](docs/screenshots/kk-dashboard.png)
 
@@ -204,8 +205,9 @@ nexus:repository-content-selector:<format>:<repo>:<selector>:read|write
 | 页面 | 说明 |
 | --- | --- |
 | `/dashboard` | 仓库/组件/资产/存储指标、14 天活动、仓库构成、最近活动、模块排行 |
+| `/search` | 按路径、模块、版本、SHA-256 跨仓库搜索资产/组件 |
 | `/repositories` | 全格式仓库列表、格式筛选、在线开关、新建/删除 |
-| `/repositories/<name>` | 概览、**文件树**、组件、资产、设置；文件树按目录懒加载，分组仓库聚合成员内容 |
+| `/repositories/<name>` | 概览、**文件树**、组件、资产、设置；设置含 include/exclude 规则与存储配额 |
 | `/access` | 用户、角色、用户组、API Token、匿名访问 |
 | `/selectors` | 内容选择器 CRUD 与表达式测试 |
 | `/cleanup` | 清理策略、预览/执行、最近运行记录 |
@@ -292,6 +294,7 @@ cmd/server ─── api ─── service ─── store
 | `GET/POST/DELETE` | `/api/tokens` … | API Token |
 | `GET/PUT` | `/api/security/anonymous` | 匿名访问策略 |
 | `GET` | `/api/audit` / `/api/logs` | 审计 / 请求日志 |
+| `GET` | `/api/search?q=&type=&format=&repository=&checksum=` | 跨仓库搜索资产/组件 |
 | `GET` | `/api/backup/export` | 导出完整备份归档 |
 | `POST` | `/api/backup/import?mode=&force=` | 导入备份（replace / merge） |
 | `GET` | `/metrics` | Prometheus 指标 |
@@ -374,7 +377,9 @@ kkrepo-go import -data ./data -in backup.tgz -mode merge
 | APT | Packages/Release + OpenPGP 签名 | by-hash、Sources/Contents/Translation、flat 模式、按仓库密钥轮换 |
 | Alpine | APKINDEX + RSA 签名 | 代理签名校验/re-sign、按仓库密钥轮换、公钥管理 API |
 | 安全扫描 | 未实现 | Syft/Grype、扫描策略、finding/waiver、SBOM、下载阻断 |
-| 协议深度 | 基本可用 | Maven snapshot/checksum/group 元数据合并；npm/PyPI/Helm/Cargo/Pub/Swift 的 group 合并与 URL 重写；Docker Bearer token/connector/cross-repo mount；Yum/Conda 真实包元数据解析 |
+| 协议深度 | 基本可用 + 校验和 | Maven snapshot/group 元数据合并；npm/PyPI/Helm/Cargo/Pub/Swift 的 group 合并与 URL 重写；Docker Bearer token/connector/cross-repo mount；Yum/Conda 真实包元数据解析 |
+| 仓库策略 | include/exclude、存储配额 | layout/version policy、strict content type、快照保留策略、优先级 |
+| 搜索 | 路径/模块/版本/SHA-256 | AQL、属性搜索、GAV 组合搜索、保存筛选 |
 | Nexus 兼容层 | 未实现 | `/service/rest/v1/*`、Nexus UI 兼容端点、browse HTML |
 | 运维能力 | 基础 | cache 管理 API、rate limit、SLO/worker 指标、清理调度与保护规则 |
 | 协议令牌 | 通用 API Token | npm/cargo/pub 等按协议发放 Token 的专用端点 |
@@ -422,4 +427,4 @@ BASE=http://localhost:8080 ./examples/smoke.sh   # 真实 HTTP 端到端示例�
 ./bin/kkrepo-go import -data /tmp/new-data -in /tmp/backup.tgz -force
 ```
 
-覆盖内容包括 Go 路径/版本/zip 规则、hosted/proxy/group、Maven 元数据、Helm index、Cargo 发布/索引、npm packument/dist-tags、PyPI simple 索引、Pub 发布/元数据、Docker push/pull、Git LFS、Conda repodata、Yum repomd/primary、APT Packages/Release/InRelease、Alpine APKINDEX/签名、文件树、清理策略、内容选择器、权限匹配、管理 API 鉴权与 CRUD。`examples/smoke.sh` 会创建临时仓库、上传各格式示例、验证索引/下载/清理/审计后清理仓库。
+覆盖内容包括 Go 路径/版本/zip 规则、hosted/proxy/group、Maven 元数据与校验和、Helm index、Cargo 发布/索引、npm packument/dist-tags、PyPI simple 索引、Pub 发布/元数据、Docker push/pull、Git LFS、Conda repodata、Yum repomd/primary、APT Packages/Release/InRelease、Alpine APKINDEX/签名、include/exclude 规则、存储配额、全局搜索、文件树、清理策略、内容选择器、权限匹配、管理 API 鉴权与 CRUD。`examples/smoke.sh` 会创建临时仓库、上传各格式示例、验证索引/下载/清理/审计后清理仓库。

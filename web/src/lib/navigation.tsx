@@ -5,6 +5,7 @@ import {
 	Filter,
 	LayoutDashboard,
 	type LucideIcon,
+	Search,
 	ScrollText,
 	Settings,
 	ShieldCheck,
@@ -14,6 +15,7 @@ import {
 export type AppPath =
 	| "/dashboard"
 	| "/repositories"
+	| "/search"
 	| "/access"
 	| "/selectors"
 	| "/audit"
@@ -35,6 +37,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 		label: "工作台",
 		items: [
 			{ label: "概览", to: "/dashboard", icon: LayoutDashboard, keywords: "dashboard overview home 概览" },
+			{ label: "全局搜索", to: "/search", icon: Search, keywords: "search checksum path 搜索" },
 		],
 	},
 	{

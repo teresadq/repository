@@ -4,9 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -455,4 +458,83 @@ func TestAlpineSignedIndex(t *testing.T) {
 	if !strings.Contains(string(publicKey), "BEGIN PUBLIC KEY") {
 		t.Fatal("Alpine public key missing")
 	}
+}
+
+func TestChecksumEndpoints(t *testing.T) {
+	svc := newTestService(t)
+	repo := formatRepo(t, svc, "checksum-maven", "maven", "hosted")
+	content := "checksum-content"
+	serveFormat(t, svc, repo, &Request{
+		Method: http.MethodPut, Path: "com/example/demo/1.0.0/demo-1.0.0.jar",
+		Header: http.Header{}, Body: strings.NewReader(content),
+	})
+	expected := map[string]string{
+		"sha1":   sha1Hex([]byte(content)),
+		"sha256": sha256Hex([]byte(content)),
+	}
+	for algorithm, want := range expected {
+		_, body := serveFormat(t, svc, repo, &Request{
+			Method: http.MethodGet, Path: "com/example/demo/1.0.0/demo-1.0.0.jar." + algorithm,
+			Header: http.Header{},
+		})
+		if string(body) != want {
+			t.Fatalf("%s = %q, want %q", algorithm, body, want)
+		}
+	}
+	_, md5Body := serveFormat(t, svc, repo, &Request{
+		Method: http.MethodGet, Path: "com/example/demo/1.0.0/demo-1.0.0.jar.md5", Header: http.Header{},
+	})
+	if len(md5Body) != 32 {
+		t.Fatalf("md5 = %q", md5Body)
+	}
+}
+
+func TestRepositoryPathPolicies(t *testing.T) {
+	svc := newTestService(t)
+	repo, err := svc.store.CreateRepository(&store.Repository{
+		Name: "policy-raw", Recipe: "raw-hosted", Format: "raw", Type: "hosted", Online: true,
+		Hosted:          &store.HostedSettings{WritePolicy: "ALLOW"},
+		IncludePatterns: []string{"allowed/**"}, ExcludePatterns: []string{"allowed/secret/**"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveFormat(t, svc, repo, &Request{Method: http.MethodPut, Path: "allowed/a.txt", Header: http.Header{}, Body: strings.NewReader("a")})
+	_, body := serveFormat(t, svc, repo, &Request{Method: http.MethodGet, Path: "allowed/a.txt", Header: http.Header{}})
+	if string(body) != "a" {
+		t.Fatalf("allowed body = %q", body)
+	}
+	for _, path := range []string{"other/b.txt", "allowed/secret/c.txt"} {
+		if _, err := svc.serveRepository(repo, &Request{
+			Method: http.MethodPut, Path: path, Header: http.Header{}, Body: strings.NewReader("x"),
+		}); err == nil {
+			t.Fatalf("%s should be blocked by policy", path)
+		}
+	}
+}
+
+func TestRepositoryStorageQuota(t *testing.T) {
+	svc := newTestService(t)
+	repo, err := svc.store.CreateRepository(&store.Repository{
+		Name: "quota-raw", Recipe: "raw-hosted", Format: "raw", Type: "hosted", Online: true,
+		Hosted: &store.HostedSettings{WritePolicy: "ALLOW"}, StorageQuotaBytes: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.serveRepository(repo, &Request{
+		Method: http.MethodPut, Path: "big.bin", Header: http.Header{}, Body: strings.NewReader("0123456789"),
+	}); !errors.Is(err, store.ErrQuota) {
+		t.Fatalf("expected quota error, got %v", err)
+	}
+	if _, err := svc.serveRepository(repo, &Request{
+		Method: http.MethodPut, Path: "small.bin", Header: http.Header{}, Body: strings.NewReader("12345"),
+	}); err != nil {
+		t.Fatalf("small upload: %v", err)
+	}
+}
+
+func sha1Hex(body []byte) string {
+	sum := sha1.Sum(body)
+	return hex.EncodeToString(sum[:])
 }

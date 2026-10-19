@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/session", s.handleSession)
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("GET /api/activity", s.handleActivity)
+	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/recipes", s.handleRecipes)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
@@ -565,6 +566,9 @@ func (s *Server) writeServiceError(w http.ResponseWriter, err error) {
 	if errors.As(err, &serviceErr) {
 		status = serviceErr.Status
 		message = serviceErr.Message
+	} else if errors.Is(err, store.ErrQuota) {
+		status = http.StatusRequestEntityTooLarge
+		message = err.Error()
 	} else {
 		s.logger.Error("protocol error", "error", err)
 	}

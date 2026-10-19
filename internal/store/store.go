@@ -28,23 +28,28 @@ var (
 	ErrAlreadyExists = errors.New("already exists")
 	// ErrInvalid indicates invalid metadata supplied by a caller.
 	ErrInvalid = errors.New("invalid")
+	// ErrQuota indicates a repository storage quota would be exceeded.
+	ErrQuota = errors.New("storage quota exceeded")
 )
 
 const stateVersion = 2
 
 // Repository is a Go module repository (hosted, proxy or group).
 type Repository struct {
-	Name        string          `json:"name"`
-	Recipe      string          `json:"recipe"`
-	Format      string          `json:"format"`
-	Type        string          `json:"type"`
-	Online      bool            `json:"online"`
-	Description string          `json:"description,omitempty"`
-	Hosted      *HostedSettings `json:"hosted,omitempty"`
-	Proxy       *ProxySettings  `json:"proxy,omitempty"`
-	Group       *GroupSettings  `json:"group,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	Name              string          `json:"name"`
+	Recipe            string          `json:"recipe"`
+	Format            string          `json:"format"`
+	Type              string          `json:"type"`
+	Online            bool            `json:"online"`
+	Description       string          `json:"description,omitempty"`
+	Hosted            *HostedSettings `json:"hosted,omitempty"`
+	Proxy             *ProxySettings  `json:"proxy,omitempty"`
+	Group             *GroupSettings  `json:"group,omitempty"`
+	IncludePatterns   []string        `json:"includePatterns,omitempty"`
+	ExcludePatterns   []string        `json:"excludePatterns,omitempty"`
+	StorageQuotaBytes int64           `json:"storageQuotaBytes,omitempty"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	UpdatedAt         time.Time       `json:"updatedAt"`
 }
 
 // HostedSettings configures write behavior for hosted repositories.
@@ -519,6 +524,8 @@ func cloneRepository(repo *Repository) *Repository {
 		group.MemberNames = append([]string(nil), repo.Group.MemberNames...)
 		copied.Group = &group
 	}
+	copied.IncludePatterns = append([]string{}, repo.IncludePatterns...)
+	copied.ExcludePatterns = append([]string{}, repo.ExcludePatterns...)
 	return &copied
 }
 
@@ -591,6 +598,17 @@ func (s *Store) PutRelease(assets []*Asset, components []*Component, replace boo
 func (s *Store) putAssetLocked(asset *Asset, component *Component, replace bool) error {
 	if s.state.Assets[asset.Repository] == nil {
 		s.state.Assets[asset.Repository] = map[string]*Asset{}
+	}
+	if quota := s.state.Repositories[asset.Repository].StorageQuotaBytes; quota > 0 {
+		var usage int64
+		for existingPath, existing := range s.state.Assets[asset.Repository] {
+			if existingPath != asset.Path {
+				usage += existing.Size
+			}
+		}
+		if usage+asset.Size > quota {
+			return fmt.Errorf("%w: %s (%d > %d bytes)", ErrQuota, asset.Repository, usage+asset.Size, quota)
+		}
 	}
 	repoAssets := s.state.Assets[asset.Repository]
 	existing := repoAssets[asset.Path]

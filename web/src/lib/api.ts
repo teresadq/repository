@@ -45,6 +45,9 @@ export type Repository = {
 	updatedAt: string;
 	stats: RepoStats;
 	proxyState?: ProxyState;
+	includePatterns?: string[];
+	excludePatterns?: string[];
+	storageQuotaBytes?: number;
 };
 
 export type Component = {
@@ -280,11 +283,27 @@ export type ContentSelector = {
 	updatedAt: string;
 };
 
+export type SearchItem = {
+	type: "asset" | "component";
+	repository: string;
+	format: string;
+	name: string;
+	version?: string;
+	path?: string;
+	size?: number;
+	sha256?: string;
+	updatedAt: string;
+	url?: string;
+};
+
 export type RepositoryInput = {
 	name?: string;
 	recipe?: string;
 	online?: boolean;
 	description?: string;
+	includePatterns?: string[];
+	excludePatterns?: string[];
+	storageQuotaBytes?: number;
 	hosted?: { writePolicy: string };
 	proxy?: {
 		remoteUrl?: string;
@@ -417,6 +436,13 @@ export const api = {
 		}),
 	logout: () => request<{ authenticated: boolean }>("/api/logout", { method: "POST" }),
 	overview: () => request<OverviewResponse>("/api/overview"),
+	search: (params: { q?: string; type?: string; format?: string; repository?: string; checksum?: string; limit?: number; offset?: number }) => {
+		const search = new URLSearchParams();
+		Object.entries(params).forEach(([key, value]) => {
+			if (value !== undefined && value !== "") search.set(key, String(value));
+		});
+		return request<{ items: SearchItem[]; total: number; offset: number; limit: number }>(`/api/search?${search.toString()}`);
+	},
 	status: () => request<StatusResponse>("/api/status"),
 	repositories: () => request<{ items: Repository[] }>("/api/repositories"),
 	repository: (name: string) => request<Repository>(`/api/repositories/${encodeURIComponent(name)}`),

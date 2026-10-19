@@ -45,6 +45,18 @@ func (s *Service) ServeRepository(repositoryName string, request *Request) (*Res
 }
 
 func (s *Service) serveRepository(repository *store.Repository, request *Request) (*Response, error) {
+	if request.Path != "" {
+		checkPath := strings.Trim(request.Path, "/")
+		if spec, base, ok := checksumRequest(checkPath); ok {
+			if !repositoryAllowsPath(repository, base) {
+				return nil, NotFound(request.Path)
+			}
+			return s.serveChecksum(repository, request, spec, base)
+		}
+		if !repositoryAllowsPath(repository, checkPath) {
+			return nil, NotFound(request.Path)
+		}
+	}
 	switch repository.Format {
 	case "go":
 		switch request.Method {

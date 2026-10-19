@@ -79,6 +79,10 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -
 expect_code 201 "$code" "maven upload"
 curl -s "$M/com/acme/demo/maven-metadata.xml" -o "$WORK/maven.xml"
 contains "$WORK/maven.xml" '<version>1.0.0</version>' "maven generated metadata"
+EXPECTED_SHA1=$(printf 'jar-bytes' | shasum -a 1 | cut -d' ' -f1)
+EXPECTED_SHA256=$(printf 'jar-bytes' | shasum -a 256 | cut -d' ' -f1)
+curl -s "$M/com/acme/demo/1.0.0/demo-1.0.0.jar.sha1" -o "$WORK/demo.sha1"
+contains "$WORK/demo.sha1" "$EXPECTED_SHA1" "maven sha1 checksum file"
 
 # npm: publish a packument with one tarball attachment.
 python3 - "$N" "$WORK/npm.json" <<'PY'
@@ -204,6 +208,25 @@ contains "$WORK/tree.json" '"name":"e2e"' "browse tree root"
 curl -s -b "$COOKIE" "$BASE/api/repositories/e2e-raw-$SUFFIX/browse?path=e2e" -o "$WORK/tree-e2e.json"
 contains "$WORK/tree-e2e.json" '1.txt' "browse tree directory"
 
+# Repository policy + quota + search.
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIE" -H 'Content-Type: application/json' \
+	-d "{\"name\":\"e2e-policy-$SUFFIX\",\"recipe\":\"raw-hosted\",\"includePatterns\":[\"allowed/**\"],\"excludePatterns\":[\"allowed/blocked/**\"],\"storageQuotaBytes\":100}" \
+	"$BASE/api/repositories")
+expect_code 201 "$code" "policy repository create"
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT --data-binary 'ok' "$BASE/repository/e2e-policy-$SUFFIX/allowed/a.txt")
+expect_code 201 "$code" "policy allow path upload"
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT --data-binary 'no' "$BASE/repository/e2e-policy-$SUFFIX/other/b.txt")
+expect_code 404 "$code" "policy include blocks path"
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT --data-binary 'no' "$BASE/repository/e2e-policy-$SUFFIX/allowed/blocked/c.txt")
+expect_code 404 "$code" "policy exclude blocks path"
+BIG=$(python3 -c 'print("x"*200)')
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT --data-binary "$BIG" "$BASE/repository/e2e-policy-$SUFFIX/allowed/big.bin")
+expect_code 413 "$code" "storage quota rejects oversized upload"
+curl -s -b "$COOKIE" "$BASE/api/search?repository=e2e-policy-$SUFFIX&q=allowed" -o "$WORK/search.json"
+contains "$WORK/search.json" 'allowed/a.txt' "global search finds asset"
+curl -s -b "$COOKIE" "$BASE/api/search?checksum=$EXPECTED_SHA256" -o "$WORK/search-checksum.json"
+contains "$WORK/search-checksum.json" 'demo-1.0.0.jar' "global search by checksum"
+
 # Content selector: validate expression matching through the API.
 code=$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIE" -H 'Content-Type: application/json' \
 	-d "{\"name\":\"e2e-selector-$SUFFIX\",\"expression\":\"path.startsWith(\\\"e2e/\\\")\"}" \
@@ -243,6 +266,7 @@ contains "$WORK/audit.json" 'repository.create' "audit log"
 for name in maven npm pypi helm cargo conda yum apt alpine pub raw; do
 	delete_repo "e2e-$name-$SUFFIX"
 done
+delete_repo "e2e-policy-$SUFFIX"
 curl -s -o /dev/null -b "$COOKIE" -X DELETE "$BASE/api/cleanup/policies/e2e-cleanup-$SUFFIX"
 
 printf '\n\033[32mAll smoke tests passed.\033[0m\n'

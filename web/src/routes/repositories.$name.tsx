@@ -584,6 +584,9 @@ function SettingsTab({
 	const [remotePassword, setRemotePassword] = useState("");
 	const [remoteBearer, setRemoteBearer] = useState("");
 	const [members, setMembers] = useState<string[]>(repo.group?.memberNames ?? []);
+	const [includePatterns, setIncludePatterns] = useState((repo.includePatterns ?? []).join("\n"));
+	const [excludePatterns, setExcludePatterns] = useState((repo.excludePatterns ?? []).join("\n"));
+	const [storageQuota, setStorageQuota] = useState(repo.storageQuotaBytes ? String(repo.storageQuotaBytes) : "");
 	const [saving, setSaving] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleting, setDeleting] = useState(false);
@@ -600,6 +603,9 @@ function SettingsTab({
 		setRemotePassword("");
 		setRemoteBearer("");
 		setMembers(repo.group?.memberNames ?? []);
+		setIncludePatterns((repo.includePatterns ?? []).join("\n"));
+		setExcludePatterns((repo.excludePatterns ?? []).join("\n"));
+		setStorageQuota(repo.storageQuotaBytes ? String(repo.storageQuotaBytes) : "");
 	}, [repo]);
 
 	const candidates = repositories.filter(
@@ -610,6 +616,9 @@ function SettingsTab({
 		const payload: RepositoryInput = updatePayload(repo, {
 			online,
 			description,
+			includePatterns: includePatterns.split("\n").map((line) => line.trim()).filter(Boolean),
+			excludePatterns: excludePatterns.split("\n").map((line) => line.trim()).filter(Boolean),
+			storageQuotaBytes: Number(storageQuota) || 0,
 		});
 		if (repo.type === "hosted") payload.hosted = { writePolicy };
 		if (repo.type === "proxy") {
@@ -665,6 +674,27 @@ function SettingsTab({
 							onChange={(event) => setDescription(event.target.value)}
 							className="h-8 w-64 text-xs"
 						/>
+					</SettingRow>
+					<SettingRow label="Include 规则" description="每行一个 glob；非空时只允许匹配路径（支持 **）。">
+						<textarea
+							value={includePatterns}
+							onChange={(event) => setIncludePatterns(event.target.value)}
+							rows={3}
+							className="bg-background focus-visible:border-primary h-20 w-72 rounded-sm border px-2 py-1.5 font-mono text-[11px] outline-none"
+							placeholder={"com/acme/**\norg/example/**"}
+						/>
+					</SettingRow>
+					<SettingRow label="Exclude 规则" description="每行一个 glob；优先于 Include，匹配即拒绝。">
+						<textarea
+							value={excludePatterns}
+							onChange={(event) => setExcludePatterns(event.target.value)}
+							rows={3}
+							className="bg-background focus-visible:border-primary h-20 w-72 rounded-sm border px-2 py-1.5 font-mono text-[11px] outline-none"
+							placeholder={"**/snapshots/**"}
+						/>
+					</SettingRow>
+					<SettingRow label="存储配额" description="字节；0 表示不限制。超过后写入/缓存返回 413。">
+						<Input value={storageQuota} onChange={(event) => setStorageQuota(event.target.value)} className="h-8 w-32 font-mono text-xs" placeholder="0" />
 					</SettingRow>
 					{repo.type === "hosted" ? (
 						<SettingRow label="写入策略" description="ALLOW 允许覆盖同一模块版本，DENY 拒绝重复上传。">

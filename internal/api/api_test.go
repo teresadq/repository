@@ -3,6 +3,8 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -431,5 +433,53 @@ func TestLDAPLoginProvisionsUser(t *testing.T) {
 	roles := strings.Join(user.Roles, ",")
 	if !strings.Contains(roles, "nx-developer") || !strings.Contains(roles, "nx-anonymous") {
 		t.Fatalf("roles = %v", user.Roles)
+	}
+}
+
+func TestGlobalSearch(t *testing.T) {
+	server, _ := newTestServer(t)
+	cookie := login(t, server.URL)
+	content := "searchable-content"
+	request, _ := http.NewRequest(http.MethodPut,
+		server.URL+"/repository/raw-hosted/search/demo.txt", strings.NewReader(content))
+	request.SetBasicAuth("admin", "admin123")
+	upload, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload.Body.Close()
+	if upload.StatusCode != http.StatusCreated {
+		t.Fatalf("upload = %d", upload.StatusCode)
+	}
+	sum := sha256.Sum256([]byte(content))
+	checksum := hex.EncodeToString(sum[:])
+
+	search := func(query string) map[string]any {
+		req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/search?"+query, nil)
+		req.AddCookie(cookie)
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	body := search("q=demo")
+	items, _ := body["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["path"] != "search/demo.txt" {
+		t.Fatalf("search by path = %v", body)
+	}
+	body = search("checksum=" + checksum[:16])
+	items, _ = body["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["sha256"] != checksum {
+		t.Fatalf("search by checksum = %v", body)
+	}
+	body = search("repository=raw-hosted&type=assets&q=demo")
+	if total := body["total"]; total != float64(1) {
+		t.Fatalf("search filters = %v", body)
 	}
 }

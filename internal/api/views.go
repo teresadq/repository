@@ -13,13 +13,16 @@ import (
 var repositoryNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type repositoryRequest struct {
-	Name        string         `json:"name"`
-	Recipe      string         `json:"recipe"`
-	Online      *bool          `json:"online"`
-	Description *string        `json:"description"`
-	Hosted      *hostedRequest `json:"hosted"`
-	Proxy       *proxyRequest  `json:"proxy"`
-	Group       *groupRequest  `json:"group"`
+	Name              string         `json:"name"`
+	Recipe            string         `json:"recipe"`
+	Online            *bool          `json:"online"`
+	Description       *string        `json:"description"`
+	Hosted            *hostedRequest `json:"hosted"`
+	Proxy             *proxyRequest  `json:"proxy"`
+	Group             *groupRequest  `json:"group"`
+	IncludePatterns   []string       `json:"includePatterns"`
+	ExcludePatterns   []string       `json:"excludePatterns"`
+	StorageQuotaBytes int64          `json:"storageQuotaBytes"`
 }
 
 type hostedRequest struct {
@@ -41,20 +44,23 @@ type groupRequest struct {
 }
 
 type repoView struct {
-	Name        string                `json:"name"`
-	Recipe      string                `json:"recipe"`
-	Format      string                `json:"format"`
-	Type        string                `json:"type"`
-	Online      bool                  `json:"online"`
-	Description string                `json:"description"`
-	URL         string                `json:"url"`
-	Hosted      *store.HostedSettings `json:"hosted,omitempty"`
-	Proxy       *store.ProxySettings  `json:"proxy,omitempty"`
-	Group       *store.GroupSettings  `json:"group,omitempty"`
-	CreatedAt   time.Time             `json:"createdAt"`
-	UpdatedAt   time.Time             `json:"updatedAt"`
-	Stats       store.RepoStats       `json:"stats"`
-	ProxyState  *proxyStateView       `json:"proxyState,omitempty"`
+	Name              string                `json:"name"`
+	Recipe            string                `json:"recipe"`
+	Format            string                `json:"format"`
+	Type              string                `json:"type"`
+	Online            bool                  `json:"online"`
+	Description       string                `json:"description"`
+	URL               string                `json:"url"`
+	Hosted            *store.HostedSettings `json:"hosted,omitempty"`
+	Proxy             *store.ProxySettings  `json:"proxy,omitempty"`
+	Group             *store.GroupSettings  `json:"group,omitempty"`
+	IncludePatterns   []string              `json:"includePatterns,omitempty"`
+	ExcludePatterns   []string              `json:"excludePatterns,omitempty"`
+	StorageQuotaBytes int64                 `json:"storageQuotaBytes,omitempty"`
+	CreatedAt         time.Time             `json:"createdAt"`
+	UpdatedAt         time.Time             `json:"updatedAt"`
+	Stats             store.RepoStats       `json:"stats"`
+	ProxyState        *proxyStateView       `json:"proxyState,omitempty"`
 }
 
 type proxyStateView struct {
@@ -154,6 +160,30 @@ func (s *Server) buildRepository(body repositoryRequest, existing *store.Reposit
 		repo.Description = strings.TrimSpace(*body.Description)
 	} else if existing != nil {
 		repo.Description = existing.Description
+	}
+	if body.StorageQuotaBytes < 0 {
+		return nil, fmt.Errorf("storage quota must be non-negative")
+	}
+	repo.StorageQuotaBytes = body.StorageQuotaBytes
+	if body.IncludePatterns != nil {
+		for _, pattern := range body.IncludePatterns {
+			if _, err := store.MatchGlob(pattern, "sample/path"); err != nil {
+				return nil, fmt.Errorf("invalid include pattern %q: %w", pattern, err)
+			}
+		}
+		repo.IncludePatterns = body.IncludePatterns
+	} else if existing != nil {
+		repo.IncludePatterns = existing.IncludePatterns
+	}
+	if body.ExcludePatterns != nil {
+		for _, pattern := range body.ExcludePatterns {
+			if _, err := store.MatchGlob(pattern, "sample/path"); err != nil {
+				return nil, fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
+			}
+		}
+		repo.ExcludePatterns = body.ExcludePatterns
+	} else if existing != nil {
+		repo.ExcludePatterns = existing.ExcludePatterns
 	}
 
 	switch repoType {
@@ -281,19 +311,22 @@ func (s *Server) repositorySummaries() []repoView {
 
 func (s *Server) repositoryView(repo *store.Repository) repoView {
 	view := repoView{
-		Name:        repo.Name,
-		Recipe:      repo.Recipe,
-		Format:      repo.Format,
-		Type:        repo.Type,
-		Online:      repo.Online,
-		Description: repo.Description,
-		URL:         "/repository/" + repo.Name,
-		Hosted:      repo.Hosted,
-		Proxy:       repo.Proxy,
-		Group:       repo.Group,
-		CreatedAt:   repo.CreatedAt,
-		UpdatedAt:   repo.UpdatedAt,
-		Stats:       s.store.RepoStats(repo.Name),
+		Name:              repo.Name,
+		Recipe:            repo.Recipe,
+		Format:            repo.Format,
+		Type:              repo.Type,
+		Online:            repo.Online,
+		Description:       repo.Description,
+		URL:               "/repository/" + repo.Name,
+		Hosted:            repo.Hosted,
+		Proxy:             repo.Proxy,
+		Group:             repo.Group,
+		IncludePatterns:   repo.IncludePatterns,
+		ExcludePatterns:   repo.ExcludePatterns,
+		StorageQuotaBytes: repo.StorageQuotaBytes,
+		CreatedAt:         repo.CreatedAt,
+		UpdatedAt:         repo.UpdatedAt,
+		Stats:             s.store.RepoStats(repo.Name),
 	}
 	if repo.Type == "proxy" {
 		state := proxyStateViewFrom(s.store.ProxyState(repo.Name))
