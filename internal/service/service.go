@@ -11,6 +11,7 @@ import (
 
 	"kkrepo-go/internal/gomod"
 	"kkrepo-go/internal/signing"
+	"kkrepo-go/internal/singleflight"
 	"kkrepo-go/internal/store"
 	"kkrepo-go/internal/upstream"
 )
@@ -27,6 +28,8 @@ type Service struct {
 
 	aptSigner    *signing.APT
 	alpineSigner *signing.Alpine
+
+	flight singleflight.Group
 }
 
 // New creates a Go protocol service.

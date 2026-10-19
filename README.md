@@ -9,6 +9,7 @@
 - 后台能力：用户 / 角色 / 用户组 / 权限 / API Token / 匿名访问 / LDAP / OIDC / 审计日志 / 请求日志 / Prometheus 指标
 - 签名：APT `Release` / `InRelease` / `Release.gpg`，Alpine `APKINDEX.tar.gz` RSA 签名
 - 常用仓库能力：`.sha1/.md5/.sha256` 校验和文件、include/exclude 路径规则、存储配额、全局搜索
+- 并发回源：同实例内按 `repo + path` 合并 proxy 缓存未命中请求（Docker 键含 `Accept`），避免冷缓存击穿
 
 ![控制台概览](docs/screenshots/kk-dashboard.png)
 
@@ -427,4 +428,4 @@ BASE=http://localhost:8080 ./examples/smoke.sh   # 真实 HTTP 端到端示例�
 ./bin/kkrepo-go import -data /tmp/new-data -in /tmp/backup.tgz -force
 ```
 
-覆盖内容包括 Go 路径/版本/zip 规则、hosted/proxy/group、Maven 元数据与校验和、Helm index、Cargo 发布/索引、npm packument/dist-tags、PyPI simple 索引、Pub 发布/元数据、Docker push/pull、Git LFS、Conda repodata、Yum repomd/primary、APT Packages/Release/InRelease、Alpine APKINDEX/签名、include/exclude 规则、存储配额、全局搜索、文件树、清理策略、内容选择器、权限匹配、管理 API 鉴权与 CRUD。`examples/smoke.sh` 会创建临时仓库、上传各格式示例、验证索引/下载/清理/审计后清理仓库。
+覆盖内容包括 Go 路径/版本/zip 规则、hosted/proxy/group、proxy singleflight 并发合并（Go/Maven/Docker/错误共享）、Maven 元数据与校验和、Helm index、Cargo 发布/索引、npm packument/dist-tags、PyPI simple 索引、Pub 发布/元数据、Docker push/pull、Git LFS、Conda repodata、Yum repomd/primary、APT Packages/Release/InRelease、Alpine APKINDEX/签名、include/exclude 规则、存储配额、全局搜索、文件树、清理策略、内容选择器、权限匹配、管理 API 鉴权与 CRUD。`examples/smoke.sh` 会创建临时仓库、上传各格式示例、验证索引/下载/清理/审计后清理仓库。

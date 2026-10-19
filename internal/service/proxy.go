@@ -46,10 +46,29 @@ func (s *Service) serveProxy(repository *store.Repository, rawPath string, headO
 		}
 		return nil, BadUpstream("Upstream temporarily blocked: " + remoteURL(repository))
 	}
-	return s.fetchAndCache(repository, path, cached, hasCached, headOnly, now)
+	key := "go|" + repository.Name + "|" + path.Path
+	value, err := s.flight.Do(key, func() (any, error) {
+		current, hasCurrent := s.store.GetAsset(repository.Name, path.Path)
+		currentNow := s.now()
+		if hasCurrent && isFresh(current, ttl, currentNow) {
+			return current, nil
+		}
+		if s.store.IsNotFoundCached(repository.Name, path.Path) {
+			return nil, NotFound(path.Path)
+		}
+		return s.fetchAndCache(repository, path, current, hasCurrent, currentNow)
+	})
+	if err != nil {
+		return nil, err
+	}
+	asset, ok := value.(*store.Asset)
+	if !ok || asset == nil {
+		return nil, NotFound(path.Path)
+	}
+	return s.serveCachedProxy(asset, path, headOnly)
 }
 
-func (s *Service) fetchAndCache(repository *store.Repository, path gomod.GoPath, cached *store.Asset, hasCached, headOnly bool, now time.Time) (*Response, error) {
+func (s *Service) fetchAndCache(repository *store.Repository, path gomod.GoPath, cached *store.Asset, hasCached bool, now time.Time) (*store.Asset, error) {
 	url := buildRemoteURL(remoteURL(repository), path.Path)
 	headers := http.Header{}
 	applyUpstreamAuth(headers, repository)
@@ -73,7 +92,7 @@ func (s *Service) fetchAndCache(repository *store.Repository, path gomod.GoPath,
 		result, err = s.fetchBytesWithHeaders(url, etag, lastModified, headers)
 	}
 	if err != nil {
-		return s.handleUpstreamFailure(repository, path, cached, hasCached, headOnly,
+		return s.handleUpstreamFailure(repository, path, cached, hasCached,
 			"Upstream IO error: "+err.Error(), now)
 	}
 	defer result.cleanup()
@@ -82,14 +101,14 @@ func (s *Service) fetchAndCache(repository *store.Repository, path gomod.GoPath,
 		s.store.TouchAsset(repository.Name, path.Path, now)
 		s.store.RecordProxySuccess(repository.Name, now)
 		s.store.InvalidateNotFound(repository.Name, path.Path)
-		return s.serveCachedProxy(cached, path, headOnly)
+		return cached, nil
 	case result.status >= 200 && result.status < 300:
 		s.store.InvalidateNotFound(repository.Name, path.Path)
-		return s.persistAndServe(repository, path, result, headOnly, now)
+		return s.persistProxyAsset(repository, path, result, now)
 	case result.status == 404 || result.status == 410:
 		s.store.RecordProxySuccess(repository.Name, now)
 		if hasCached {
-			return s.serveCachedProxy(cached, path, headOnly)
+			return cached, nil
 		}
 		if result.status == 404 {
 			ttl := time.Duration(repository.MetadataMaxAge()) * time.Minute
@@ -100,12 +119,12 @@ func (s *Service) fetchAndCache(repository *store.Repository, path gomod.GoPath,
 		}
 		return nil, NotFound(path.Path)
 	default:
-		return s.handleUpstreamFailure(repository, path, cached, hasCached, headOnly,
+		return s.handleUpstreamFailure(repository, path, cached, hasCached,
 			fmt.Sprintf("Upstream returned %d", result.status), now)
 	}
 }
 
-func (s *Service) persistAndServe(repository *store.Repository, path gomod.GoPath, result *upstreamResult, headOnly bool, now time.Time) (*Response, error) {
+func (s *Service) persistProxyAsset(repository *store.Repository, path gomod.GoPath, result *upstreamResult, now time.Time) (*store.Asset, error) {
 	var (
 		sum  string
 		size int64
@@ -154,7 +173,7 @@ func (s *Service) persistAndServe(repository *store.Repository, path gomod.GoPat
 		return nil, fmt.Errorf("persist proxy asset: %w", err)
 	}
 	s.store.RecordProxySuccess(repository.Name, now)
-	return s.serveCachedProxy(asset, path, headOnly)
+	return asset, nil
 }
 
 func (s *Service) serveCachedProxy(asset *store.Asset, path gomod.GoPath, headOnly bool) (*Response, error) {
@@ -171,7 +190,7 @@ func (s *Service) serveCachedProxy(asset *store.Asset, path gomod.GoPath, headOn
 	return streamResponse(200, path.ProxyContentType(), body, asset.Size, asset.ETag, lastModified, headOnly), nil
 }
 
-func (s *Service) handleUpstreamFailure(repository *store.Repository, path gomod.GoPath, cached *store.Asset, hasCached, headOnly bool, message string, now time.Time) (*Response, error) {
+func (s *Service) handleUpstreamFailure(repository *store.Repository, path gomod.GoPath, cached *store.Asset, hasCached bool, message string, now time.Time) (*store.Asset, error) {
 	failCount := s.store.ProxyState(repository.Name).FailCount
 	var backoff time.Duration
 	if repository.AutoBlock() {
@@ -183,7 +202,7 @@ func (s *Service) handleUpstreamFailure(repository *store.Repository, path gomod
 	}
 	s.store.RecordProxyFailure(repository.Name, backoff, message, now)
 	if hasCached {
-		return s.serveCachedProxy(cached, path, headOnly)
+		return cached, nil
 	}
 	return nil, BadUpstream(message)
 }

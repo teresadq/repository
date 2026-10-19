@@ -434,75 +434,80 @@ func (s *Service) serveDockerProxy(repository *store.Repository, request *Reques
 	if kind != "manifest" && kind != "blob" {
 		return nil, NotFound(path)
 	}
-	cachePath := path
-	if asset, ok := s.store.GetAsset(repository.Name, cachePath); ok {
-		ttl := repository.MetadataMaxAge()
+	ttl := repository.MetadataMaxAge()
+	if kind == "blob" {
+		ttl = repository.ContentMaxAge()
+	}
+	if asset, ok := s.store.GetAsset(repository.Name, path); ok && isFresh(asset, ttl, s.now()) {
+		return s.serveDockerCached(asset, kind, request.HeadOnly)
+	}
+	key := "docker|" + repository.Name + "|" + path + "|" + request.Header.Get("Accept")
+	value, err := s.flight.Do(key, func() (any, error) {
+		if current, ok := s.store.GetAsset(repository.Name, path); ok && isFresh(current, ttl, s.now()) {
+			return current, nil
+		}
+		target := buildRemoteURL(remoteURL(repository), path)
+		response, err := s.dockerFetch(repository, request, target, image, kind)
+		if err != nil {
+			return nil, BadUpstream("Docker upstream error: " + err.Error())
+		}
+		defer response.Body.Close()
+		if response.StatusCode == http.StatusNotFound {
+			return nil, NotFound(path)
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return nil, &Error{Status: response.StatusCode, Message: fmt.Sprintf("Docker upstream returned %d", response.StatusCode)}
+		}
+		limit := int64(32 << 20)
+		pattern := "docker-manifest-*"
 		if kind == "blob" {
-			ttl = repository.ContentMaxAge()
+			limit = maxGenericUploadBytes
+			pattern = "docker-upstream-*"
 		}
-		if isFresh(asset, ttl, s.now()) {
-			return s.serveDockerCached(asset, kind, request.HeadOnly)
+		file, err := os.CreateTemp(s.store.TempDir(), pattern)
+		if err != nil {
+			return nil, err
 		}
-	}
-	target := buildRemoteURL(remoteURL(repository), path)
-	response, err := s.dockerFetch(repository, request, target, image, kind)
+		tempFile := file.Name()
+		size, copyErr := io.Copy(file, io.LimitReader(response.Body, limit))
+		closeErr := file.Close()
+		if copyErr != nil {
+			os.Remove(tempFile)
+			return nil, copyErr
+		}
+		if closeErr != nil {
+			os.Remove(tempFile)
+			return nil, closeErr
+		}
+		defer os.Remove(tempFile)
+		sum, size, _, err := s.store.SaveBlobFile(tempFile)
+		if err != nil {
+			return nil, err
+		}
+		now := s.now()
+		contentType := response.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		asset := &store.Asset{
+			Repository: repository.Name, Format: "docker", Path: path, Module: image, Version: reference,
+			Kind: kind, ContentType: contentType, Size: size, SHA256: sum, Source: "proxy",
+			ETag: response.Header.Get("ETag"), CreatedAt: now, UpdatedAt: now,
+			Attributes: map[string]string{"digest": response.Header.Get("Docker-Content-Digest")},
+		}
+		if err := s.store.PutAsset(asset, nil, true); err != nil {
+			return nil, err
+		}
+		s.store.RecordProxySuccess(repository.Name, now)
+		return asset, nil
+	})
 	if err != nil {
-		return nil, BadUpstream("Docker upstream error: " + err.Error())
+		return nil, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
+	asset, ok := value.(*store.Asset)
+	if !ok || asset == nil {
 		return nil, NotFound(path)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, &Error{Status: response.StatusCode, Message: fmt.Sprintf("Docker upstream returned %d", response.StatusCode)}
-	}
-	var tempFile string
-	var size int64
-	if kind == "blob" {
-		file, err := os.CreateTemp(s.store.TempDir(), "docker-upstream-*")
-		if err != nil {
-			return nil, err
-		}
-		tempFile = file.Name()
-		size, err = io.Copy(file, io.LimitReader(response.Body, maxGenericUploadBytes))
-		file.Close()
-		if err != nil {
-			os.Remove(tempFile)
-			return nil, err
-		}
-	} else {
-		file, err := os.CreateTemp(s.store.TempDir(), "docker-manifest-*")
-		if err != nil {
-			return nil, err
-		}
-		tempFile = file.Name()
-		size, err = io.Copy(file, io.LimitReader(response.Body, 32<<20))
-		file.Close()
-		if err != nil {
-			os.Remove(tempFile)
-			return nil, err
-		}
-	}
-	defer os.Remove(tempFile)
-	sum, size, _, err := s.store.SaveBlobFile(tempFile)
-	if err != nil {
-		return nil, err
-	}
-	now := s.now()
-	contentType := response.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	asset := &store.Asset{
-		Repository: repository.Name, Format: "docker", Path: cachePath, Module: image, Version: reference,
-		Kind: kind, ContentType: contentType, Size: size, SHA256: sum, Source: "proxy",
-		ETag: response.Header.Get("ETag"), CreatedAt: now, UpdatedAt: now,
-		Attributes: map[string]string{"digest": response.Header.Get("Docker-Content-Digest")},
-	}
-	if err := s.store.PutAsset(asset, nil, true); err != nil {
-		return nil, err
-	}
-	s.store.RecordProxySuccess(repository.Name, now)
 	return s.serveDockerCached(asset, kind, request.HeadOnly)
 }
 

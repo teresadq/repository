@@ -210,6 +210,33 @@ func (s *Service) serveGenericProxy(repository *store.Repository, request *Reque
 		}
 		return nil, BadUpstream("Upstream temporarily blocked: " + remoteURL(repository))
 	}
+	key := "generic|" + repository.Name + "|" + path
+	value, err := s.flight.Do(key, func() (any, error) {
+		current, hasCurrent := s.store.GetAsset(repository.Name, path)
+		currentNow := s.now()
+		currentTTL := repository.ContentMaxAge()
+		if isMetadataPath(repository.Format, path) {
+			currentTTL = repository.MetadataMaxAge()
+		}
+		if hasCurrent && isFresh(current, currentTTL, currentNow) {
+			return current, nil
+		}
+		if s.store.IsNotFoundCached(repository.Name, path) {
+			return nil, NotFound(path)
+		}
+		return s.fetchGenericProxy(repository, request, path, current, hasCurrent, currentNow)
+	})
+	if err != nil {
+		return nil, err
+	}
+	cachedAsset, ok := value.(*store.Asset)
+	if !ok || cachedAsset == nil {
+		return nil, NotFound(path)
+	}
+	return s.serveCachedGeneric(cachedAsset, request.HeadOnly)
+}
+
+func (s *Service) fetchGenericProxy(repository *store.Repository, request *Request, path string, cached *store.Asset, hasCached bool, now time.Time) (*store.Asset, error) {
 	upstreamPath := request.EscapedPath
 	if upstreamPath == "" {
 		upstreamPath = escapePath(path)
@@ -221,9 +248,9 @@ func (s *Service) serveGenericProxy(repository *store.Repository, request *Reque
 	etag := ""
 	var lastModified time.Time
 	if hasCached {
-		etag = asset.ETag
-		if asset.LastModified != "" {
-			if parsed, err := time.Parse(time.RFC3339, asset.LastModified); err == nil {
+		etag = cached.ETag
+		if cached.LastModified != "" {
+			if parsed, err := time.Parse(time.RFC3339, cached.LastModified); err == nil {
 				lastModified = parsed
 			}
 		}
@@ -238,7 +265,7 @@ func (s *Service) serveGenericProxy(repository *store.Repository, request *Reque
 		result, err = s.fetchFileWithHeaders(target, etag, lastModified, headers)
 	}
 	if err != nil {
-		return s.handleGenericUpstreamFailure(repository, path, asset, hasCached, request.HeadOnly,
+		return s.handleGenericUpstreamFailure(repository, path, cached, hasCached,
 			"Upstream IO error: "+err.Error(), now)
 	}
 	defer result.cleanup()
@@ -246,14 +273,15 @@ func (s *Service) serveGenericProxy(repository *store.Repository, request *Reque
 	case result.status == 304 && hasCached:
 		s.store.TouchAsset(repository.Name, path, now)
 		s.store.RecordProxySuccess(repository.Name, now)
-		return s.serveCachedGeneric(asset, request.HeadOnly)
+		s.store.InvalidateNotFound(repository.Name, path)
+		return cached, nil
 	case result.status >= 200 && result.status < 300:
 		s.store.InvalidateNotFound(repository.Name, path)
-		return s.persistGenericProxy(repository, path, result, request.HeadOnly, now)
+		return s.persistGenericProxy(repository, path, result, now)
 	case result.status == 404 || result.status == 410:
 		s.store.RecordProxySuccess(repository.Name, now)
 		if hasCached {
-			return s.serveCachedGeneric(asset, request.HeadOnly)
+			return cached, nil
 		}
 		if result.status == 404 {
 			ttl := time.Duration(repository.MetadataMaxAge()) * time.Minute
@@ -266,12 +294,12 @@ func (s *Service) serveGenericProxy(repository *store.Repository, request *Reque
 	case result.status >= 400 && result.status < 500:
 		return nil, &Error{Status: result.status, Message: fmt.Sprintf("Upstream returned %d", result.status)}
 	default:
-		return s.handleGenericUpstreamFailure(repository, path, asset, hasCached, request.HeadOnly,
+		return s.handleGenericUpstreamFailure(repository, path, cached, hasCached,
 			fmt.Sprintf("Upstream returned %d", result.status), now)
 	}
 }
 
-func (s *Service) persistGenericProxy(repository *store.Repository, path string, result *upstreamResult, headOnly bool, now time.Time) (*Response, error) {
+func (s *Service) persistGenericProxy(repository *store.Repository, path string, result *upstreamResult, now time.Time) (*store.Asset, error) {
 	var (
 		sum  string
 		size int64
@@ -315,7 +343,7 @@ func (s *Service) persistGenericProxy(repository *store.Repository, path string,
 		return nil, fmt.Errorf("persist proxy asset: %w", err)
 	}
 	s.store.RecordProxySuccess(repository.Name, now)
-	return s.serveCachedGeneric(asset, headOnly)
+	return asset, nil
 }
 
 func (s *Service) serveCachedGeneric(asset *store.Asset, headOnly bool) (*Response, error) {
@@ -332,7 +360,7 @@ func (s *Service) serveCachedGeneric(asset *store.Asset, headOnly bool) (*Respon
 	return streamResponse(http.StatusOK, asset.ContentType, body, asset.Size, asset.ETag, lastModified, headOnly), nil
 }
 
-func (s *Service) handleGenericUpstreamFailure(repository *store.Repository, path string, cached *store.Asset, hasCached, headOnly bool, message string, now time.Time) (*Response, error) {
+func (s *Service) handleGenericUpstreamFailure(repository *store.Repository, path string, cached *store.Asset, hasCached bool, message string, now time.Time) (*store.Asset, error) {
 	failCount := s.store.ProxyState(repository.Name).FailCount
 	var backoff time.Duration
 	if repository.AutoBlock() {
@@ -344,7 +372,7 @@ func (s *Service) handleGenericUpstreamFailure(repository *store.Repository, pat
 	}
 	s.store.RecordProxyFailure(repository.Name, backoff, message, now)
 	if hasCached {
-		return s.serveCachedGeneric(cached, headOnly)
+		return cached, nil
 	}
 	return nil, BadUpstream(message)
 }
