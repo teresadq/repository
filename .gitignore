@@ -8,3 +8,5 @@ web/dist/*
 !web/dist/.gitkeep
 web/src/routeTree.gen.ts
 web/tsconfig.tsbuildinfo
+
+server.pid

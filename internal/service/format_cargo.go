@@ -98,6 +98,12 @@ func (s *Service) cargoPublish(repository *store.Repository, request *Request) (
 	if len(crate) == 0 {
 		return nil, BadRequest("Cargo crate is empty")
 	}
+	if publish.Deps == nil {
+		publish.Deps = []json.RawMessage{}
+	}
+	if publish.Features == nil {
+		publish.Features = map[string][]string{}
+	}
 	sum, size, _, err := s.store.SaveBlobBytes(crate)
 	if err != nil {
 		return nil, err

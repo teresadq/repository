@@ -175,7 +175,16 @@ func (a *Auth) Authenticate(r *http.Request) (security.Principal, bool) {
 		}
 	}
 	authorization := r.Header.Get("Authorization")
-	if strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+	lowerAuthorization := strings.ToLower(authorization)
+	if authorization != "" && !strings.HasPrefix(lowerAuthorization, "bearer ") &&
+		!strings.HasPrefix(lowerAuthorization, "basic ") {
+		if username, ok := a.store.FindTokenByHash(store.HashToken(authorization), time.Now()); ok {
+			if user, err := a.store.GetUser(username); err == nil && user.Active {
+				return a.principal(user)
+			}
+		}
+	}
+	if strings.HasPrefix(lowerAuthorization, "bearer ") {
 		token := strings.TrimSpace(authorization[len("Bearer "):])
 		if username, ok := a.verify(token); ok {
 			if user, err := a.store.GetUser(username); err == nil && user.Active {

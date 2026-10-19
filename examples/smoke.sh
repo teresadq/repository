@@ -58,6 +58,7 @@ D="$BASE/repository/e2e-conda-$SUFFIX"
 Y="$BASE/repository/e2e-yum-$SUFFIX"
 A="$BASE/repository/e2e-apt-$SUFFIX"
 L="$BASE/repository/e2e-alpine-$SUFFIX"
+U="$BASE/repository/e2e-pub-$SUFFIX"
 R="$BASE/repository/e2e-raw-$SUFFIX"
 
 create_repo "e2e-maven-$SUFFIX" "maven-hosted"
@@ -69,6 +70,7 @@ create_repo "e2e-conda-$SUFFIX" "conda-hosted"
 create_repo "e2e-yum-$SUFFIX" "yum-hosted"
 create_repo "e2e-apt-$SUFFIX" "apt-hosted"
 create_repo "e2e-alpine-$SUFFIX" "alpine-hosted"
+create_repo "e2e-pub-$SUFFIX" "pub-hosted"
 create_repo "e2e-raw-$SUFFIX" "raw-hosted"
 
 # Maven: upload a jar and verify generated maven-metadata.xml.
@@ -175,6 +177,22 @@ contains "$WORK/APKINDEX" 'P:demo' "alpine APKINDEX"
 curl -s "$L/alpine.rsa.pub" -o "$WORK/alpine.rsa.pub"
 contains "$WORK/alpine.rsa.pub" 'BEGIN PUBLIC KEY' "alpine public key"
 
+# Dart Pub: publish an archive and read package metadata.
+mkdir -p "$WORK/pub/lib"
+printf 'name: kk_demo_pub\nversion: 1.0.0\ndescription: kkrepo pub demo\n' > "$WORK/pub/pubspec.yaml"
+printf 'String hello() => "pub";\n' > "$WORK/pub/lib/kk_demo_pub.dart"
+(cd "$WORK/pub" && COPYFILE_DISABLE=1 tar czf "$WORK/pub.tar.gz" .)
+PUB_NEW=$(curl -s "$U/api/packages/versions/new")
+PUB_URL=$(echo "$PUB_NEW" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
+code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -X POST \
+	-F "file=@$WORK/pub.tar.gz" "$PUB_URL")
+[[ "$code" == "303" ]] || fail "pub upload (expected 303, got $code)"
+pass "pub upload"
+curl -s "$U/api/packages/kk_demo_pub" -o "$WORK/pub-package.json"
+contains "$WORK/pub-package.json" '1.0.0' "pub package metadata"
+code=$(curl -s -o "$WORK/pub-download.tar.gz" -w '%{http_code}' "$U/api/archives/kk_demo_pub-1.0.0.tar.gz")
+expect_code 200 "$code" "pub archive download"
+
 # Raw + file tree.
 code=$(curl -s -o /dev/null -w '%{http_code}' -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT \
 	--data-binary 'one' "$R/e2e/1.txt")
@@ -222,7 +240,7 @@ contains "$WORK/metrics.txt" 'kkrepo_http_requests_total' "prometheus metrics"
 curl -s -b "$COOKIE" "$BASE/api/audit?action=repository&limit=50" -o "$WORK/audit.json"
 contains "$WORK/audit.json" 'repository.create' "audit log"
 
-for name in maven npm pypi helm cargo conda yum apt alpine raw; do
+for name in maven npm pypi helm cargo conda yum apt alpine pub raw; do
 	delete_repo "e2e-$name-$SUFFIX"
 done
 curl -s -o /dev/null -b "$COOKIE" -X DELETE "$BASE/api/cleanup/policies/e2e-cleanup-$SUFFIX"

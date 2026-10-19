@@ -241,7 +241,14 @@ func inspectPubspec(path string) (string, string, string) {
 		if err != nil {
 			return "", "", ""
 		}
-		if header.Typeflag != tar.TypeReg || !strings.HasSuffix(header.Name, "pubspec.yaml") {
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		base := header.Name
+		if slash := strings.LastIndexByte(base, '/'); slash >= 0 {
+			base = base[slash+1:]
+		}
+		if base != "pubspec.yaml" || strings.HasPrefix(header.Name, "._") || strings.Contains(header.Name, "/._") {
 			continue
 		}
 		content, err := io.ReadAll(io.LimitReader(tarReader, 1<<20))

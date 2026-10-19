@@ -386,6 +386,32 @@ kkrepo-go import -data ./data -in backup.tgz -mode merge
 3. APT/Alpine 按仓库密钥管理与 re-sign
 4. Nexus 兼容 REST/UI 层（如仍有需求）
 
+## 客户端兼容性测试
+
+用真实客户端验证“上传包 → 解析依赖并下载”的闭环：
+
+| 格式 | 客户端 | 测试内容 | 结果 |
+| --- | --- | --- | --- |
+| Go | `go` | `go mod tidy` + `go run` 拉取 hosted 模块 | PASS |
+| npm | `npm` | `npm publish` + `npm install` + require | PASS |
+| PyPI | `pip` | multipart 上传 wheel + venv 安装/import | PASS |
+| Cargo | `cargo` | `cargo publish` + 依赖 crate `cargo run` | PASS |
+| Maven | `mvn` | 上传 POM/JAR + `dependency:resolve` | PASS |
+| Helm | `helm` | `helm repo add/update` + `helm pull` | PASS |
+| Swift | `swift` | `swift package resolve/run` 通过 Registry | PASS |
+| Dart Pub | 协议级 | 上传会话/finalize/元数据/归档 | PASS |
+| Docker | 协议级 | push 会话/manifest/blob/tags/pull | PASS |
+| Git LFS | 协议级 | batch/upload/Range download | PASS |
+| Conda / APT / Alpine / Yum | 协议级 | 索引、签名、包下载 | PASS |
+
+测试中发现并修复：
+
+- Cargo 客户端发送原始 `Authorization: <token>`，补充了原始 Token 认证
+- macOS tar 的 AppleDouble `._pubspec.yaml` 会干扰 Pub 包识别，改为精确匹配文件名
+- SwiftPM 要求 `Content-Version: 1`、`application/json` 和裸 SHA-256 校验和，已按客户端行为修正
+
+可重复执行的协议级测试见 `examples/smoke.sh`，真实客户端示例见 `examples/client-compat.md`。
+
 ## 测试
 
 ```bash
@@ -396,4 +422,4 @@ BASE=http://localhost:8080 ./examples/smoke.sh   # 真实 HTTP 端到端示例�
 ./bin/kkrepo-go import -data /tmp/new-data -in /tmp/backup.tgz -force
 ```
 
-覆盖内容包括 Go 路径/版本/zip 规则、hosted/proxy/group、Maven 元数据、Helm index、Cargo 发布/索引、npm packument/dist-tags、PyPI simple 索引、Docker push/pull、Git LFS、Conda repodata、Yum repomd/primary、APT Packages/Release、Alpine APKINDEX、文件树、清理策略、内容选择器、权限匹配、管理 API 鉴权与 CRUD。`examples/smoke.sh` 会创建临时仓库、上传各格式示例、验证索引/下载/清理/审计后清理仓库。
+覆盖内容包括 Go 路径/版本/zip 规则、hosted/proxy/group、Maven 元数据、Helm index、Cargo 发布/索引、npm packument/dist-tags、PyPI simple 索引、Pub 发布/元数据、Docker push/pull、Git LFS、Conda repodata、Yum repomd/primary、APT Packages/Release/InRelease、Alpine APKINDEX/签名、文件树、清理策略、内容选择器、权限匹配、管理 API 鉴权与 CRUD。`examples/smoke.sh` 会创建临时仓库、上传各格式示例、验证索引/下载/清理/审计后清理仓库。

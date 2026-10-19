@@ -23,10 +23,10 @@ func (s *Service) serveSwift(repository *store.Repository, request *Request) (*R
 			return s.swiftIdentifiers(repository, request)
 		case (request.Method == http.MethodGet || request.Method == http.MethodHead):
 			if scope, name, version, ok := parseSwiftManifestPath(path); ok {
-				return s.swiftManifest(repository, request, scope, name, version)
+				return withContentVersion(s.swiftManifest(repository, request, scope, name, version))
 			}
 			if scope, name, version, ok := parseSwiftArchivePath(path); ok {
-				return s.serveStoredFile(repository, swiftArchivePath(scope, name, version), request.HeadOnly, "application/zip")
+				return withContentVersion(s.serveStoredFile(repository, swiftArchivePath(scope, name, version), request.HeadOnly, "application/zip"))
 			}
 			if scope, name, version, ok := parseSwiftReleaseMetadataPath(path); ok {
 				return s.swiftMetadata(repository, request, scope, name, version)
@@ -97,7 +97,7 @@ func (s *Service) swiftPublish(repository *store.Repository, request *Request, p
 		"version": version,
 		"resources": []map[string]any{{
 			"name": "source-archive", "type": "application/zip",
-			"checksum": map[string]string{"sha256": sum},
+			"checksum": sum,
 			"url":      request.BaseURL + "/repository/" + repository.Name + "/" + archivePath,
 		}},
 		"metadata":    metadata,
@@ -167,7 +167,7 @@ func (s *Service) swiftMetadata(repository *store.Repository, request *Request, 
 		"version": version,
 		"resources": []map[string]any{{
 			"name": "source-archive", "type": "application/zip",
-			"checksum": map[string]string{"sha256": archiveSHA},
+			"checksum": archiveSHA,
 			"url":      request.BaseURL + "/repository/" + repository.Name + "/" + archivePath,
 		}},
 		"metadata":    map[string]any{},
@@ -220,7 +220,14 @@ func (s *Service) swiftIdentifiers(repository *store.Repository, request *Reques
 }
 
 func swiftJSONResponse(body []byte, headOnly bool) (*Response, error) {
-	return bytesResponse(http.StatusOK, "application/vnd.swift.registry.v1+json", body, sha256Hex(body), time.Time{}, headOnly), nil
+	return withContentVersion(bytesResponse(http.StatusOK, "application/json", body, sha256Hex(body), time.Time{}, headOnly), nil)
+}
+
+func withContentVersion(response *Response, err error) (*Response, error) {
+	if response != nil {
+		response.Header.Set("Content-Version", "1")
+	}
+	return response, err
 }
 
 func swiftArchivePath(scope, name, version string) string {
