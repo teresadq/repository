@@ -1,0 +1,10 @@
+/bin/
+/data/
+*.log
+.DS_Store
+
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+web/src/routeTree.gen.ts
+web/tsconfig.tsbuildinfo
